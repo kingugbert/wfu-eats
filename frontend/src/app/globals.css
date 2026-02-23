@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --wfu-gold: #C8A14E;
+  --wfu-gold-light: #DFC373;
+  --wfu-gold-dark: #A8842F;
+  --wfu-black: #000000;
+  --wfu-gray-900: #111111;
+  --wfu-gray-800: #1A1A1A;
+  --wfu-gray-700: #2A2A2A;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--wfu-gray-900);
+  color: #E5E5E5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-track { background: var(--wfu-gray-800); }
+::-webkit-scrollbar-thumb { background: var(--wfu-gold-dark); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--wfu-gold); }
+
+/* Leaflet map overrides */
+.leaflet-container {
+  background: var(--wfu-gray-800) !important;
+  border-radius: 12px;
+}
+
+.wfu-popup .leaflet-popup-content-wrapper {
+  background: var(--wfu-gray-800);
+  color: #E5E5E5;
+  border: 1px solid var(--wfu-gold-dark);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.wfu-popup .leaflet-popup-tip {
+  background: var(--wfu-gray-800);
+  border: 1px solid var(--wfu-gold-dark);
+}
+.wfu-popup .leaflet-popup-close-button {
+  color: var(--wfu-gold) !important;
+}
+
+/* Gold accent button */
+.btn-gold {
+  @apply bg-wfu-gold text-black font-semibold px-5 py-2.5 rounded-lg
+         transition-all duration-200 hover:bg-wfu-gold-light hover:shadow-lg
+         hover:shadow-wfu-gold/20 active:scale-95;
+}
+
+.btn-outline-gold {
+  @apply border border-wfu-gold text-wfu-gold px-5 py-2.5 rounded-lg
+         transition-all duration-200 hover:bg-wfu-gold hover:text-black active:scale-95;
+}
+
+/* Card style */
+.card {
+  @apply bg-wfu-gray-800 border border-wfu-gray-700 rounded-xl;
+}
+
+/* Star rating */
+.star-filled { color: var(--wfu-gold); }
+.star-empty { color: #3A3A3A; }
+
+/* Animation */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeInUp {
+  animation: fadeInUp 0.4s ease-out forwards;
+}
+
+@keyframes pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(200, 161, 78, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(200, 161, 78, 0); }
+}
+.pulse-gold { animation: pulse-gold 2s infinite; }
