@@ -1,137 +1,65 @@
-#!/usr/bin/env bash
-# ─────────────────────────────────────────────
-# WFU Eats - Build & Deploy Script
-# Usage: ./deploy.sh [build|push|migrate|deploy|all]
-# ─────────────────────────────────────────────
-set -euo pipefail
+#!/bin/bash
+set -e
 
-# ── Configuration ─────────────────────────
-AWS_REGION="${AWS_REGION:-us-east-1}"
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+AWS_REGION="us-east-1"
+AWS_ACCOUNT_ID="842675982987"
+AWS_PROFILE="seminar"
 ECR_BACKEND="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/wfu-eats/backend"
 ECR_FRONTEND="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/wfu-eats/frontend"
-ECS_CLUSTER="wfu-eats-cluster"
-TAG="${TAG:-latest}"
+ALB_URL="http://wfu-eats-alb-1922173148.us-east-1.elb.amazonaws.com"
+GOOGLE_MAPS_KEY="${GOOGLE_MAPS_KEY:-YOUR_KEY_HERE}"
+GOOGLE_PLACES_API_KEY="${GOOGLE_PLACES_API_KEY:-YOUR_KEY_HERE}"
 
-RED='\033[0;31m'
-GOLD='\033[0;33m'
-GREEN='\033[0;32m'
-NC='\033[0m'
+echo "=== WFU Eats Deploy Script ==="
+echo "AWS Account: ${AWS_ACCOUNT_ID}"
+echo "Region: ${AWS_REGION}"
+echo ""
 
-log() { echo -e "${GOLD}[WFU Eats]${NC} $1"; }
-ok()  { echo -e "${GREEN}[✓]${NC} $1"; }
-err() { echo -e "${RED}[✗]${NC} $1"; exit 1; }
+# Login to ECR
+echo ">> Logging into ECR..."
+aws ecr get-login-password --region ${AWS_REGION} --profile ${AWS_PROFILE} | \
+  docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
 
-# ── ECR Login ─────────────────────────────
-ecr_login() {
-  log "Logging into ECR..."
-  aws ecr get-login-password --region "$AWS_REGION" | \
-    docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-  ok "ECR login successful"
-}
+# Build backend
+echo ""
+echo ">> Building backend..."
+docker build --platform linux/amd64 --no-cache -t wfu-eats-backend ./backend
 
-# ── Build Docker Images ──────────────────
-build() {
-  log "Building backend image..."
-  docker build -t "wfu-eats-backend:${TAG}" ./backend/
-  ok "Backend image built"
+# Build frontend
+echo ""
+echo ">> Building frontend..."
+docker build --platform linux/amd64 --no-cache \
+  --build-arg NEXT_PUBLIC_API_URL=${ALB_URL} \
+  --build-arg NEXT_PUBLIC_GOOGLE_MAPS_KEY=${GOOGLE_MAPS_KEY} \
+  -t wfu-eats-frontend ./frontend
 
-  # Get the ALB DNS for the frontend build arg
-  ALB_DNS=$(cd infrastructure/terraform && terraform output -raw app_url 2>/dev/null || echo "http://localhost:4000")
+# Tag and push backend
+echo ""
+echo ">> Pushing backend to ECR..."
+docker tag wfu-eats-backend:latest ${ECR_BACKEND}:latest
+docker push ${ECR_BACKEND}:latest
 
-  log "Building frontend image (API_URL=${ALB_DNS})..."
-  docker build \
-    --build-arg "NEXT_PUBLIC_API_URL=${ALB_DNS}" \
-    -t "wfu-eats-frontend:${TAG}" \
-    ./frontend/
-  ok "Frontend image built"
-}
+# Tag and push frontend
+echo ""
+echo ">> Pushing frontend to ECR..."
+docker tag wfu-eats-frontend:latest ${ECR_FRONTEND}:latest
+docker push ${ECR_FRONTEND}:latest
 
-# ── Push to ECR ──────────────────────────
-push() {
-  ecr_login
+# Force new deployment
+echo ""
+echo ">> Forcing ECS redeployment..."
+aws ecs update-service --cluster wfu-eats-cluster --service wfu-eats-backend --force-new-deployment --region ${AWS_REGION} --profile ${AWS_PROFILE} --no-cli-pager
+aws ecs update-service --cluster wfu-eats-cluster --service wfu-eats-frontend --force-new-deployment --region ${AWS_REGION} --profile ${AWS_PROFILE} --no-cli-pager
 
-  log "Tagging and pushing backend..."
-  docker tag "wfu-eats-backend:${TAG}" "${ECR_BACKEND}:${TAG}"
-  docker push "${ECR_BACKEND}:${TAG}"
-  ok "Backend pushed to ECR"
-
-  log "Tagging and pushing frontend..."
-  docker tag "wfu-eats-frontend:${TAG}" "${ECR_FRONTEND}:${TAG}"
-  docker push "${ECR_FRONTEND}:${TAG}"
-  ok "Frontend pushed to ECR"
-}
-
-# ── Run Database Migration ───────────────
-migrate() {
-  log "Running database migration..."
-  # Get RDS endpoint from Terraform
-  DB_HOST=$(cd infrastructure/terraform && terraform output -raw rds_endpoint | cut -d: -f1)
-  DB_PASSWORD=$(cd infrastructure/terraform && terraform output -raw 2>/dev/null || echo "")
-
-  if [ -z "$DB_HOST" ]; then
-    err "Could not get RDS endpoint. Make sure Terraform has been applied."
-  fi
-
-  log "Connecting to ${DB_HOST}..."
-  cd backend
-  DB_HOST="$DB_HOST" DB_PORT=5432 DB_NAME=wfu_eats DB_USER=wfu_admin DB_SSL=true \
-    node src/config/migrate.js
-  ok "Migration complete"
-
-  log "Seeding data..."
-  DB_HOST="$DB_HOST" DB_PORT=5432 DB_NAME=wfu_eats DB_USER=wfu_admin DB_SSL=true \
-    node src/seeds/seed.js
-  ok "Seed complete"
-  cd ..
-}
-
-# ── Force ECS Redeployment ───────────────
-deploy_ecs() {
-  log "Forcing ECS redeployment..."
-
-  aws ecs update-service \
-    --cluster "$ECS_CLUSTER" \
-    --service "wfu-eats-backend" \
-    --force-new-deployment \
-    --region "$AWS_REGION" > /dev/null
-  ok "Backend redeployment triggered"
-
-  aws ecs update-service \
-    --cluster "$ECS_CLUSTER" \
-    --service "wfu-eats-frontend" \
-    --force-new-deployment \
-    --region "$AWS_REGION" > /dev/null
-  ok "Frontend redeployment triggered"
-
-  log "Waiting for services to stabilize..."
-  aws ecs wait services-stable \
-    --cluster "$ECS_CLUSTER" \
-    --services "wfu-eats-backend" "wfu-eats-frontend" \
-    --region "$AWS_REGION"
-  ok "All services stable!"
-
-  APP_URL=$(cd infrastructure/terraform && terraform output -raw app_url)
-  echo ""
-  echo -e "${GREEN}════════════════════════════════════════${NC}"
-  echo -e "${GOLD}  WFU Eats deployed successfully!${NC}"
-  echo -e "${GREEN}  ${APP_URL}${NC}"
-  echo -e "${GREEN}════════════════════════════════════════${NC}"
-}
-
-# ── Main ─────────────────────────────────
-case "${1:-all}" in
-  build)   build ;;
-  push)    push ;;
-  migrate) migrate ;;
-  deploy)  deploy_ecs ;;
-  all)
-    build
-    push
-    deploy_ecs
-    ;;
-  *)
-    echo "Usage: $0 [build|push|migrate|deploy|all]"
-    exit 1
-    ;;
-esac
+echo ""
+echo "=== Deploy complete! ==="
+echo "App URL: ${ALB_URL}"
+echo ""
+echo "Next steps:"
+echo "  1. Wait ~2 minutes for ECS to roll out"
+echo "  2. Run migration (one-time):"
+echo "     aws ecs run-task --cluster wfu-eats-cluster --task-definition wfu-eats-backend --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[subnet-020518b20266dbe59,subnet-0fd10b0fd75532d2f],securityGroups=[sg-0a4d19bda6edc4581],assignPublicIp=ENABLED}' --overrides '{\"containerOverrides\":[{\"name\":\"backend\",\"command\":[\"node\",\"src/config/migrate.js\"]}]}' --region ${AWS_REGION} --profile ${AWS_PROFILE} --no-cli-pager"
+echo "  3. Run seed (one-time):"
+echo "     aws ecs run-task --cluster wfu-eats-cluster --task-definition wfu-eats-backend --launch-type FARGATE --network-configuration 'awsvpcConfiguration={subnets=[subnet-020518b20266dbe59,subnet-0fd10b0fd75532d2f],securityGroups=[sg-0a4d19bda6edc4581],assignPublicIp=ENABLED}' --overrides '{\"containerOverrides\":[{\"name\":\"backend\",\"command\":[\"node\",\"src/seeds/seed.js\"]}]}' --region ${AWS_REGION} --profile ${AWS_PROFILE} --no-cli-pager"
+echo "  4. Sync Google restaurants:"
+echo "     curl -X POST ${ALB_URL}/api/google/sync"

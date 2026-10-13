@@ -1,89 +1,78 @@
 'use client';
-import { Heart, Trash2, Clock, Star, Utensils } from 'lucide-react';
-import { useAuth } from './AuthContext';
 
-function timeAgo(dateStr) {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
+import { Heart, Trash2, Star, MapPin, Clock } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
+import { useAuth } from './AuthContext';
 
 export default function PostCard({ post, onLike, onDelete }) {
   const { user } = useAuth();
-  const isOwner = user?.id === post.student_id;
 
   return (
-    <article className="card p-5 animate-fadeInUp">
-      {/* Author header */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-wfu-gold/20 border border-wfu-gold/30 rounded-full
-                          flex items-center justify-center text-wfu-gold font-semibold text-sm">
-            {post.author_name?.charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-white">{post.author_name}</p>
-            <div className="flex items-center gap-2 text-xs text-wfu-gray-400">
-              <Clock className="w-3 h-3" />
-              <span>{timeAgo(post.created_at)}</span>
-              {post.meal_type && (
-                <>
-                  <span>·</span>
-                  <span className="capitalize">{post.meal_type}</span>
-                </>
-              )}
-            </div>
+    <div className="bg-wfu-gray-800 rounded-xl p-6 border border-wfu-gray-700">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <h3 className="text-lg font-bold text-white">{post.title}</h3>
+          <div className="flex items-center space-x-3 mt-1 text-sm text-wfu-gray-400">
+            <span>{post.author.firstName} {post.author.lastName}</span>
+            <span className="flex items-center">
+              <Clock size={12} className="mr-1" />
+              {formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })}
+            </span>
           </div>
         </div>
 
-        {isOwner && (
-          <button onClick={() => onDelete(post.id)}
-                  className="text-wfu-gray-500 hover:text-red-400 transition-colors p-1">
-            <Trash2 className="w-4 h-4" />
-          </button>
+        {post.rating && (
+          <div className="flex items-center space-x-1 text-wfu-gold">
+            {[...Array(5)].map((_, i) => (
+              <Star
+                key={i}
+                size={16}
+                className={i < post.rating ? 'fill-current' : 'text-wfu-gray-600'}
+              />
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Restaurant tag */}
-      {post.restaurant_name && (
-        <div className="inline-flex items-center gap-1.5 bg-wfu-gold/10 text-wfu-gold text-xs
-                        px-3 py-1.5 rounded-full mb-3 border border-wfu-gold/20">
-          <Utensils className="w-3 h-3" />
-          {post.restaurant_name}
-          {post.cuisine_type && <span className="text-wfu-gray-400">· {post.cuisine_type}</span>}
+      {post.restaurantName && (
+        <div className="flex items-center space-x-1 mb-3 text-sm text-wfu-gold">
+          <MapPin size={14} />
+          <span>{post.restaurantName}</span>
+          {post.mealType && (
+            <span className="ml-2 px-2 py-0.5 bg-wfu-gray-700 rounded-full text-xs text-wfu-gray-300">
+              {post.mealType}
+            </span>
+          )}
         </div>
       )}
 
-      {/* Title + Body */}
-      <h3 className="text-base font-semibold text-white mb-2">{post.title}</h3>
-      <p className="text-sm text-wfu-gray-300 leading-relaxed whitespace-pre-line">{post.body}</p>
+      <p className="text-wfu-gray-300 leading-relaxed mb-4">{post.content}</p>
 
-      {/* Rating */}
-      {post.rating && (
-        <div className="flex items-center gap-1 mt-3">
-          {[1, 2, 3, 4, 5].map(s => (
-            <Star key={s} className={`w-4 h-4 ${s <= post.rating ? 'star-filled fill-wfu-gold' : 'star-empty'}`} />
-          ))}
-        </div>
-      )}
-
-      {/* Actions */}
-      <div className="flex items-center gap-4 mt-4 pt-3 border-t border-wfu-gray-700/50">
+      <div className="flex items-center justify-between pt-3 border-t border-wfu-gray-700">
         <button
-          onClick={() => onLike(post.id)}
-          className={`flex items-center gap-1.5 text-sm transition-colors
-                      ${post.has_liked ? 'text-red-400' : 'text-wfu-gray-400 hover:text-red-400'}`}
+          onClick={() => onLike && onLike(post.id)}
+          disabled={!user}
+          className={`flex items-center space-x-1.5 text-sm transition-colors ${
+            post.isLiked
+              ? 'text-red-400'
+              : user
+                ? 'text-wfu-gray-400 hover:text-red-400'
+                : 'text-wfu-gray-600 cursor-not-allowed'
+          }`}
         >
-          <Heart className={`w-4 h-4 ${post.has_liked ? 'fill-red-400' : ''}`} />
-          <span>{post.likes || 0}</span>
+          <Heart size={16} className={post.isLiked ? 'fill-current' : ''} />
+          <span>{post.likeCount}</span>
         </button>
+
+        {user && user.id === post.author.id && onDelete && (
+          <button
+            onClick={() => onDelete(post.id)}
+            className="text-wfu-gray-400 hover:text-red-400 transition-colors"
+          >
+            <Trash2 size={16} />
+          </button>
+        )}
       </div>
-    </article>
+    </div>
   );
 }

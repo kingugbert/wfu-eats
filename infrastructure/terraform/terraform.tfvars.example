@@ -1,19 +1,6 @@
-# Copy to terraform.tfvars and fill in your values
-aws_region    = "us-east-1"
-environment   = "staging"
-
-# Database
-db_instance_class = "db.t4g.micro"
-db_username       = "wfu_admin"
-db_password       = "CHANGE_ME_strong_password_here"
-
-# Auth
-jwt_secret = "CHANGE_ME_generate_with_openssl_rand_hex_32"
-
-# ECS sizing (cost-optimized defaults)
-backend_cpu            = "256"
-backend_memory         = "512"
-backend_desired_count  = 1
-frontend_cpu           = "256"
-frontend_memory        = "512"
-frontend_desired_count = 1
+aws_region            = "us-east-1"
+project_name          = "wfu-eats"
+db_username           = "wfueats"
+db_password           = "CHANGE_ME_strong_password_here"
+jwt_secret            = "CHANGE_ME_random_secret_string"
+google_places_api_key = "YOUR_GOOGLE_PLACES_API_KEY"

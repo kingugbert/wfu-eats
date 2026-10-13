@@ -1,41 +1,86 @@
-const router = require('express').Router();
+const express = require('express');
 const pool = require('../config/db');
 const { authenticate, optionalAuth } = require('../middleware/auth');
 
-// Get all posts (blog feed)
+const router = express.Router();
+
+// Get all posts
 router.get('/', optionalAuth, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-    const offset = (page - 1) * limit;
+    const { page = 1, limit = 20, restaurant_id } = req.query;
+    const offset = (parseInt(page) - 1) * parseInt(limit);
 
-    const result = await pool.query(
-      `SELECT p.*, s.display_name AS author_name, s.avatar_url AS author_avatar,
-              r.name AS restaurant_name, r.cuisine_type
-       FROM posts p
-       JOIN students s ON p.student_id = s.id
-       LEFT JOIN restaurants r ON p.restaurant_id = r.id
-       ORDER BY p.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
-    );
+    let query = `
+      SELECT p.*,
+        s.first_name AS author_first_name,
+        s.last_name AS author_last_name,
+        s.email AS author_email,
+        r.name AS restaurant_name,
+        (SELECT COUNT(*) FROM post_likes pl WHERE pl.post_id = p.id) AS like_count
+    `;
 
-    const countResult = await pool.query('SELECT COUNT(*) FROM posts');
-    const total = parseInt(countResult.rows[0].count);
-
-    // Include whether the current user has liked each post
     if (req.user) {
-      const likeResult = await pool.query(
-        'SELECT post_id FROM post_likes WHERE student_id = $1',
-        [req.user.id]
-      );
-      const likedSet = new Set(likeResult.rows.map(r => r.post_id));
-      result.rows.forEach(p => { p.has_liked = likedSet.has(p.id); });
+      query += `,
+        EXISTS(
+          SELECT 1 FROM post_likes pl
+          WHERE pl.post_id = p.id AND pl.student_id = $3
+        ) AS is_liked
+      `;
     }
 
+    query += `
+      FROM posts p
+      JOIN students s ON p.student_id = s.id
+      LEFT JOIN restaurants r ON p.restaurant_id = r.id
+    `;
+
+    const params = [parseInt(limit), offset];
+    if (req.user) params.push(req.user.id);
+
+    let paramIndex = params.length;
+
+    if (restaurant_id) {
+      paramIndex++;
+      query += ` WHERE p.restaurant_id = $${paramIndex}`;
+      params.push(restaurant_id);
+    }
+
+    query += ` ORDER BY p.created_at DESC LIMIT $1 OFFSET $2`;
+
+    const result = await pool.query(query, params);
+
+    // Get total count
+    let countQuery = 'SELECT COUNT(*) FROM posts';
+    const countParams = [];
+    if (restaurant_id) {
+      countQuery += ' WHERE restaurant_id = $1';
+      countParams.push(restaurant_id);
+    }
+    const countResult = await pool.query(countQuery, countParams);
+
     res.json({
-      posts: result.rows,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+      posts: result.rows.map(p => ({
+        id: p.id,
+        title: p.title,
+        content: p.content,
+        rating: p.rating,
+        mealType: p.meal_type,
+        restaurantId: p.restaurant_id,
+        restaurantName: p.restaurant_name,
+        author: {
+          id: p.student_id,
+          firstName: p.author_first_name,
+          lastName: p.author_last_name,
+          email: p.author_email
+        },
+        likeCount: parseInt(p.like_count),
+        isLiked: p.is_liked || false,
+        createdAt: p.created_at,
+        updatedAt: p.updated_at
+      })),
+      total: parseInt(countResult.rows[0].count),
+      page: parseInt(page),
+      limit: parseInt(limit)
     });
   } catch (err) {
     console.error('Get posts error:', err);
@@ -43,40 +88,68 @@ router.get('/', optionalAuth, async (req, res) => {
   }
 });
 
-// Create a post
+// Create post
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { title, body, restaurantId, imageUrl, mealType, rating } = req.body;
-    if (!title || !body) {
-      return res.status(400).json({ error: 'title and body are required' });
+    const { title, content, rating, mealType, restaurantId } = req.body;
+
+    if (!title || !content) {
+      return res.status(400).json({ error: 'Title and content are required' });
+    }
+
+    if (rating && (rating < 1 || rating > 5)) {
+      return res.status(400).json({ error: 'Rating must be between 1 and 5' });
     }
 
     const result = await pool.query(
-      `INSERT INTO posts (student_id, restaurant_id, title, body, image_url, meal_type, rating)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO posts (student_id, restaurant_id, title, content, rating, meal_type)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [req.user.id, restaurantId || null, title, body, imageUrl || null, mealType || null, rating || null]
+      [req.user.id, restaurantId || null, title, content, rating || null, mealType || null]
     );
 
-    // Fetch with author info
-    const post = await pool.query(
-      `SELECT p.*, s.display_name AS author_name, s.avatar_url AS author_avatar,
-              r.name AS restaurant_name
-       FROM posts p
-       JOIN students s ON p.student_id = s.id
-       LEFT JOIN restaurants r ON p.restaurant_id = r.id
-       WHERE p.id = $1`,
-      [result.rows[0].id]
-    );
+    const post = result.rows[0];
 
-    res.status(201).json(post.rows[0]);
+    // Fetch author info
+    const authorResult = await pool.query(
+      'SELECT first_name, last_name, email FROM students WHERE id = $1',
+      [req.user.id]
+    );
+    const author = authorResult.rows[0];
+
+    // Fetch restaurant name if applicable
+    let restaurantName = null;
+    if (post.restaurant_id) {
+      const restResult = await pool.query('SELECT name FROM restaurants WHERE id = $1', [post.restaurant_id]);
+      if (restResult.rows.length > 0) restaurantName = restResult.rows[0].name;
+    }
+
+    res.status(201).json({
+      id: post.id,
+      title: post.title,
+      content: post.content,
+      rating: post.rating,
+      mealType: post.meal_type,
+      restaurantId: post.restaurant_id,
+      restaurantName,
+      author: {
+        id: req.user.id,
+        firstName: author.first_name,
+        lastName: author.last_name,
+        email: author.email
+      },
+      likeCount: 0,
+      isLiked: false,
+      createdAt: post.created_at,
+      updatedAt: post.updated_at
+    });
   } catch (err) {
     console.error('Create post error:', err);
     res.status(500).json({ error: 'Failed to create post' });
   }
 });
 
-// Like / unlike a post
+// Like/unlike post
 router.post('/:id/like', authenticate, async (req, res) => {
   try {
     const existing = await pool.query(
@@ -85,16 +158,16 @@ router.post('/:id/like', authenticate, async (req, res) => {
     );
 
     if (existing.rows.length > 0) {
-      // Unlike
-      await pool.query('DELETE FROM post_likes WHERE post_id = $1 AND student_id = $2',
-        [req.params.id, req.user.id]);
-      await pool.query('UPDATE posts SET likes = GREATEST(likes - 1, 0) WHERE id = $1', [req.params.id]);
+      await pool.query(
+        'DELETE FROM post_likes WHERE post_id = $1 AND student_id = $2',
+        [req.params.id, req.user.id]
+      );
       res.json({ liked: false });
     } else {
-      // Like
-      await pool.query('INSERT INTO post_likes (post_id, student_id) VALUES ($1, $2)',
-        [req.params.id, req.user.id]);
-      await pool.query('UPDATE posts SET likes = likes + 1 WHERE id = $1', [req.params.id]);
+      await pool.query(
+        'INSERT INTO post_likes (post_id, student_id) VALUES ($1, $2)',
+        [req.params.id, req.user.id]
+      );
       res.json({ liked: true });
     }
   } catch (err) {
@@ -103,16 +176,18 @@ router.post('/:id/like', authenticate, async (req, res) => {
   }
 });
 
-// Delete own post
+// Delete post
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
       'DELETE FROM posts WHERE id = $1 AND student_id = $2 RETURNING id',
       [req.params.id, req.user.id]
     );
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Post not found or not authorized' });
     }
+
     res.json({ message: 'Post deleted' });
   } catch (err) {
     console.error('Delete post error:', err);

@@ -1,5 +1,6 @@
 'use client';
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+
+import { createContext, useContext, useState, useEffect } from 'react';
 import { auth as authApi } from '../lib/api';
 
 const AuthContext = createContext(null);
@@ -8,20 +9,19 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const loadUser = useCallback(async () => {
+  useEffect(() => {
     const token = localStorage.getItem('wfu_token');
-    if (!token) { setLoading(false); return; }
-    try {
-      const data = await authApi.me();
-      setUser(data);
-    } catch {
-      localStorage.removeItem('wfu_token');
-    } finally {
+    if (token) {
+      authApi.me()
+        .then(setUser)
+        .catch(() => {
+          localStorage.removeItem('wfu_token');
+        })
+        .finally(() => setLoading(false));
+    } else {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => { loadUser(); }, [loadUser]);
 
   const login = async (email, password) => {
     const data = await authApi.login({ email, password });
@@ -30,8 +30,8 @@ export function AuthProvider({ children }) {
     return data;
   };
 
-  const register = async (formData) => {
-    const data = await authApi.register(formData);
+  const register = async (userData) => {
+    const data = await authApi.register(userData);
     localStorage.setItem('wfu_token', data.token);
     setUser(data.student);
     return data;
@@ -50,7 +50,7 @@ export function AuthProvider({ children }) {
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  return context;
 }

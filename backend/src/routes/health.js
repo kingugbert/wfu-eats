@@ -1,16 +1,18 @@
-const router = require('express').Router();
+const express = require('express');
 const pool = require('../config/db');
 
-router.get('/', async (_req, res) => {
+const router = express.Router();
+
+router.get('/', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
     res.json({
       status: 'healthy',
       timestamp: result.rows[0].now,
-      service: 'wfu-eats-api',
-      version: '1.0.0'
+      uptime: process.uptime()
     });
   } catch (err) {
+    console.error('Health check failed:', err);
     res.status(503).json({ status: 'unhealthy', error: err.message });
   }
 });

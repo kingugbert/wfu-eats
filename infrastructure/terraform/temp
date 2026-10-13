@@ -1,0 +1,9 @@
+docker build --platform linux/amd64 --no-cache \\
+  --build-arg NEXT_PUBLIC_API_URL=http://wfu-eats-alb-1922173148.us-east-1.elb.amazonaws.com \
+  --build-arg NEXT_PUBLIC_GOOGLE_MAPS_KEY='AIzaSyCSYGdH81t2G1nsJKS6S-sCeziF0WlQvUw' \
+  -t wfu-eats-frontend:latest ../../frontend/
+
+docker tag wfu-eats-frontend:latest 842675982987.dkr.ecr.us-east-1.amazonaws.com/wfu-eats/frontend:latest
+docker push 842675982987.dkr.ecr.us-east-1.amazonaws.com/wfu-eats/frontend:latest
+
+aws ecs update-service --no-cli-pager --cluster wfu-eats-cluster --service wfu-eats-frontend --force-new-deployment --region us-east-1

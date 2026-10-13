@@ -1,4 +1,3 @@
-require('dotenv').config();
 const pool = require('./db');
 
 const migrate = async () => {
@@ -6,121 +5,178 @@ const migrate = async () => {
   try {
     await client.query('BEGIN');
 
-    // Enable UUID extension
-    await client.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
+    // Helper: check if a column exists in a table
+    const columnExists = async (table, column) => {
+      const res = await client.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`,
+        [table, column]
+      );
+      return res.rows.length > 0;
+    };
 
-    // -----------------------------------------------------------------------
-    // Students table
-    // -----------------------------------------------------------------------
+    // Students table — drop and recreate if old schema detected
+    const hasStudentsTable = (await client.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'students'`
+    )).rows.length > 0;
+
+    if (hasStudentsTable) {
+      const hasFirstName = await columnExists('students', 'first_name');
+      const hasDisplayName = await columnExists('students', 'display_name');
+      if (!hasFirstName || hasDisplayName) {
+        // Old schema — drop dependent tables first, then recreate
+        console.log('Detected old students schema, recreating...');
+        await client.query('DROP TABLE IF EXISTS post_likes CASCADE');
+        await client.query('DROP TABLE IF EXISTS posts CASCADE');
+        await client.query('DROP TABLE IF EXISTS favorites CASCADE');
+        await client.query('DROP TABLE IF EXISTS students CASCADE');
+      }
+    }
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS students (
-        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        email         VARCHAR(255) UNIQUE NOT NULL,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email VARCHAR(255) UNIQUE NOT NULL,
         password_hash VARCHAR(255) NOT NULL,
-        display_name  VARCHAR(100) NOT NULL,
-        class_year    INTEGER CHECK (class_year >= 2020 AND class_year <= 2035),
-        major         VARCHAR(150),
-        avatar_url    VARCHAR(512),
-        created_at    TIMESTAMPTZ DEFAULT NOW(),
-        updated_at    TIMESTAMPTZ DEFAULT NOW()
+        first_name VARCHAR(100) NOT NULL,
+        last_name VARCHAR(100) NOT NULL,
+        graduation_year INTEGER,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
 
-    // -----------------------------------------------------------------------
-    // Restaurants table
-    // -----------------------------------------------------------------------
+    // Restaurants table with Google Places fields
     await client.query(`
       CREATE TABLE IF NOT EXISTS restaurants (
-        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        name          VARCHAR(200) NOT NULL,
-        description   TEXT,
-        address       VARCHAR(400) NOT NULL,
-        latitude      DECIMAL(10, 7) NOT NULL,
-        longitude     DECIMAL(10, 7) NOT NULL,
-        cuisine_type  VARCHAR(100),
-        price_range   VARCHAR(10) CHECK (price_range IN ('$', '$$', '$$$', '$$$$')),
-        phone         VARCHAR(30),
-        website       VARCHAR(512),
-        hours         JSONB,
-        image_url     VARCHAR(512),
-        avg_rating    DECIMAL(2, 1) DEFAULT 0.0,
-        review_count  INTEGER DEFAULT 0,
-        distance_miles DECIMAL(4, 2),
-        created_at    TIMESTAMPTZ DEFAULT NOW()
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL,
+        address VARCHAR(500),
+        latitude DECIMAL(10, 7) NOT NULL,
+        longitude DECIMAL(10, 7) NOT NULL,
+        cuisine VARCHAR(100),
+        price_range INTEGER CHECK (price_range BETWEEN 1 AND 4),
+        description TEXT,
+        phone VARCHAR(20),
+        website VARCHAR(500),
+        google_place_id VARCHAR(300) UNIQUE,
+        google_rating DECIMAL(2, 1),
+        google_photo_ref VARCHAR(500),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
 
-    // -----------------------------------------------------------------------
-    // Favorites (join table)
-    // -----------------------------------------------------------------------
+    // Add columns if they don't exist (for upgrades from older schema)
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='cuisine') THEN
+          ALTER TABLE restaurants ADD COLUMN cuisine VARCHAR(100);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='price_range') THEN
+          ALTER TABLE restaurants ADD COLUMN price_range INTEGER CHECK (price_range BETWEEN 1 AND 4);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='description') THEN
+          ALTER TABLE restaurants ADD COLUMN description TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='phone') THEN
+          ALTER TABLE restaurants ADD COLUMN phone VARCHAR(20);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='website') THEN
+          ALTER TABLE restaurants ADD COLUMN website VARCHAR(500);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='google_place_id') THEN
+          ALTER TABLE restaurants ADD COLUMN google_place_id VARCHAR(300) UNIQUE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='google_rating') THEN
+          ALTER TABLE restaurants ADD COLUMN google_rating DECIMAL(2, 1);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='restaurants' AND column_name='google_photo_ref') THEN
+          ALTER TABLE restaurants ADD COLUMN google_photo_ref VARCHAR(500);
+        END IF;
+      END $$;
+    `);
+
+    // Drop stray columns from restaurants that the code doesn't use
+    await client.query(`
+      ALTER TABLE restaurants DROP COLUMN IF EXISTS distance_miles;
+    `);
+
+    // Favorites table
     await client.query(`
       CREATE TABLE IF NOT EXISTS favorites (
-        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        student_id    UUID REFERENCES students(id) ON DELETE CASCADE,
-        restaurant_id UUID REFERENCES restaurants(id) ON DELETE CASCADE,
-        meal_type     VARCHAR(20) CHECK (meal_type IN ('lunch', 'dinner', 'both')),
-        notes         TEXT,
-        created_at    TIMESTAMPTZ DEFAULT NOW(),
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        restaurant_id UUID NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         UNIQUE(student_id, restaurant_id)
       );
     `);
 
-    // -----------------------------------------------------------------------
-    // Posts (blog)
-    // -----------------------------------------------------------------------
+    // Posts table — check for old schema
+    const hasPostsTable = (await client.query(
+      `SELECT 1 FROM information_schema.tables WHERE table_name = 'posts'`
+    )).rows.length > 0;
+
+    if (hasPostsTable) {
+      const hasContent = await columnExists('posts', 'content');
+      if (!hasContent) {
+        console.log('Detected old posts schema, recreating...');
+        await client.query('DROP TABLE IF EXISTS post_likes CASCADE');
+        await client.query('DROP TABLE IF EXISTS posts CASCADE');
+      }
+    }
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS posts (
-        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        student_id    UUID REFERENCES students(id) ON DELETE CASCADE,
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
         restaurant_id UUID REFERENCES restaurants(id) ON DELETE SET NULL,
-        title         VARCHAR(300) NOT NULL,
-        body          TEXT NOT NULL,
-        image_url     VARCHAR(512),
-        meal_type     VARCHAR(20) CHECK (meal_type IN ('lunch', 'dinner', 'snack')),
-        rating        INTEGER CHECK (rating >= 1 AND rating <= 5),
-        likes         INTEGER DEFAULT 0,
-        created_at    TIMESTAMPTZ DEFAULT NOW(),
-        updated_at    TIMESTAMPTZ DEFAULT NOW()
+        title VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        rating INTEGER CHECK (rating BETWEEN 1 AND 5),
+        meal_type VARCHAR(50),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       );
     `);
 
-    // -----------------------------------------------------------------------
-    // Post likes
-    // -----------------------------------------------------------------------
+    // Post likes table
     await client.query(`
       CREATE TABLE IF NOT EXISTS post_likes (
-        id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-        post_id    UUID REFERENCES posts(id) ON DELETE CASCADE,
-        student_id UUID REFERENCES students(id) ON DELETE CASCADE,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+        student_id UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         UNIQUE(post_id, student_id)
       );
     `);
 
-    // -----------------------------------------------------------------------
     // Indexes
-    // -----------------------------------------------------------------------
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_restaurants_location
-        ON restaurants (latitude, longitude);
-      CREATE INDEX IF NOT EXISTS idx_favorites_student
-        ON favorites (student_id);
-      CREATE INDEX IF NOT EXISTS idx_posts_created
-        ON posts (created_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_posts_student
-        ON posts (student_id);
+      CREATE INDEX IF NOT EXISTS idx_favorites_student ON favorites(student_id);
+      CREATE INDEX IF NOT EXISTS idx_favorites_restaurant ON favorites(restaurant_id);
+      CREATE INDEX IF NOT EXISTS idx_posts_student ON posts(student_id);
+      CREATE INDEX IF NOT EXISTS idx_posts_restaurant ON posts(restaurant_id);
+      CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_post_likes_post ON post_likes(post_id);
+      CREATE INDEX IF NOT EXISTS idx_restaurants_location ON restaurants(latitude, longitude);
+      CREATE INDEX IF NOT EXISTS idx_restaurants_google_place_id ON restaurants(google_place_id);
     `);
 
     await client.query('COMMIT');
-    console.log('Migration completed successfully.');
+    console.log('Migration completed successfully');
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Migration failed:', err);
-    process.exit(1);
+    throw err;
   } finally {
     client.release();
     await pool.end();
   }
 };
 
-migrate();
+migrate().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

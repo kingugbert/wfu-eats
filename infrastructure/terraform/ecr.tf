@@ -1,9 +1,5 @@
-# ─────────────────────────────────────────────
-# ECR Repositories
-# ─────────────────────────────────────────────
-
 resource "aws_ecr_repository" "backend" {
-  name                 = "wfu-eats/backend"
+  name                 = "${var.project_name}/backend"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -11,11 +7,13 @@ resource "aws_ecr_repository" "backend" {
     scan_on_push = true
   }
 
-  tags = { Name = "wfu-eats-backend-ecr" }
+  tags = {
+    Name = "${var.project_name}-backend"
+  }
 }
 
 resource "aws_ecr_repository" "frontend" {
-  name                 = "wfu-eats/frontend"
+  name                 = "${var.project_name}/frontend"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
@@ -23,12 +21,14 @@ resource "aws_ecr_repository" "frontend" {
     scan_on_push = true
   }
 
-  tags = { Name = "wfu-eats-frontend-ecr" }
+  tags = {
+    Name = "${var.project_name}-frontend"
+  }
 }
 
-# Lifecycle policy to keep only last 10 images
 resource "aws_ecr_lifecycle_policy" "backend" {
   repository = aws_ecr_repository.backend.name
+
   policy = jsonencode({
     rules = [{
       rulePriority = 1
@@ -38,13 +38,16 @@ resource "aws_ecr_lifecycle_policy" "backend" {
         countType   = "imageCountMoreThan"
         countNumber = 10
       }
-      action = { type = "expire" }
+      action = {
+        type = "expire"
+      }
     }]
   })
 }
 
 resource "aws_ecr_lifecycle_policy" "frontend" {
   repository = aws_ecr_repository.frontend.name
+
   policy = jsonencode({
     rules = [{
       rulePriority = 1
@@ -54,7 +57,9 @@ resource "aws_ecr_lifecycle_policy" "frontend" {
         countType   = "imageCountMoreThan"
         countNumber = 10
       }
-      action = { type = "expire" }
+      action = {
+        type = "expire"
+      }
     }]
   })
 }

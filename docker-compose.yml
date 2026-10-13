@@ -1,65 +1,38 @@
-# ─────────────────────────────────────────────
-# WFU Eats - Local Development Stack
-# ─────────────────────────────────────────────
-version: "3.9"
-
 services:
-  # ── PostgreSQL Database ──────────────────
   db:
     image: postgres:16-alpine
-    container_name: wfu-eats-db
     environment:
-      POSTGRES_DB: wfu_eats
-      POSTGRES_USER: wfu_admin
-      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: wfueats
+      POSTGRES_USER: wfueats
+      POSTGRES_PASSWORD: localdev123
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wfu_admin -d wfu_eats"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
-  # ── Backend API ──────────────────────────
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: wfu-eats-backend
-    environment:
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_NAME: wfu_eats
-      DB_USER: wfu_admin
-      DB_PASSWORD: localdev
-      DB_SSL: "false"
-      JWT_SECRET: local-dev-secret-change-in-production
-      PORT: 4000
-      CORS_ORIGIN: http://localhost:3000
+    build: ./backend
     ports:
       - "4000:4000"
+    environment:
+      DATABASE_URL: postgresql://wfueats:localdev123@db:5432/wfueats
+      JWT_SECRET: local-dev-secret-change-in-production
+      PORT: 4000
+      NODE_ENV: development
+      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY}
     depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
+      - db
 
-  # ── Frontend ─────────────────────────────
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: http://localhost:4000
-    container_name: wfu-eats-frontend
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:4000
+        NEXT_PUBLIC_GOOGLE_MAPS_KEY: ${GOOGLE_MAPS_KEY}
     ports:
       - "3000:3000"
     depends_on:
       - backend
-    restart: unless-stopped
 
 volumes:
   pgdata:

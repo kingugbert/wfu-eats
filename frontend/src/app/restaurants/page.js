@@ -1,8 +1,9 @@
 'use client';
+
 import { useState, useEffect, useCallback } from 'react';
-import { students as studentApi } from '../lib/api';
+import { Heart, MapPin, Star, ExternalLink } from 'lucide-react';
 import { useAuth } from '../components/AuthContext';
-import { Heart, MapPin, Star, Trash2, Utensils } from 'lucide-react';
+import { students as studentsApi } from '../lib/api';
 
 export default function FavoritesPage() {
   const { user } = useAuth();
@@ -10,10 +11,12 @@ export default function FavoritesPage() {
   const [loading, setLoading] = useState(true);
 
   const fetchFavorites = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
+    if (!user) {
+      setLoading(false);
+      return;
+    }
     try {
-      setLoading(true);
-      const data = await studentApi.getFavorites();
+      const data = await studentsApi.favorites();
       setFavorites(data);
     } catch (err) {
       console.error('Failed to fetch favorites:', err);
@@ -22,12 +25,14 @@ export default function FavoritesPage() {
     }
   }, [user]);
 
-  useEffect(() => { fetchFavorites(); }, [fetchFavorites]);
+  useEffect(() => {
+    fetchFavorites();
+  }, [fetchFavorites]);
 
-  const handleRemove = async (restaurantId) => {
+  const removeFavorite = async (restaurantId) => {
     try {
-      await studentApi.removeFavorite(restaurantId);
-      setFavorites(prev => prev.filter(f => f.restaurant_id !== restaurantId));
+      await studentsApi.removeFavorite(restaurantId);
+      setFavorites(prev => prev.filter(f => f.id !== restaurantId));
     } catch (err) {
       console.error('Failed to remove favorite:', err);
     }
@@ -35,67 +40,66 @@ export default function FavoritesPage() {
 
   if (!user) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <Heart className="w-12 h-12 text-wfu-gray-600 mx-auto mb-4" />
-        <h1 className="text-xl font-display font-bold text-wfu-gold mb-2">Sign in to see your favorites</h1>
-        <p className="text-wfu-gray-400">Track your favorite lunch and dinner spots near campus.</p>
+      <div className="max-w-3xl mx-auto px-4 py-16 text-center">
+        <Heart size={48} className="mx-auto text-wfu-gray-600 mb-4" />
+        <h2 className="text-2xl font-bold text-white mb-2">Sign in to see your favorites</h2>
+        <p className="text-wfu-gray-400">Save your favorite restaurants near campus</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 bg-wfu-gold/20 border border-wfu-gold/30 rounded-xl flex items-center justify-center">
-          <Heart className="w-5 h-5 text-wfu-gold" />
-        </div>
-        <div>
-          <h1 className="text-xl font-display font-bold text-wfu-gold">My Favorites</h1>
-          <p className="text-sm text-wfu-gray-400">{favorites.length} saved restaurant{favorites.length !== 1 ? 's' : ''}</p>
-        </div>
-      </div>
+    <div className="max-w-3xl mx-auto px-4 py-8">
+      <h1 className="text-3xl font-bold text-wfu-gold mb-6">Your Favorites</h1>
 
       {loading ? (
-        <div className="text-center py-12 text-wfu-gray-500">Loading favorites...</div>
+        <div className="text-center py-12">
+          <div className="w-8 h-8 border-2 border-wfu-gold border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-wfu-gray-400">Loading favorites...</p>
+        </div>
       ) : favorites.length === 0 ? (
-        <div className="card p-8 text-center">
-          <Utensils className="w-10 h-10 text-wfu-gray-600 mx-auto mb-3" />
-          <p className="text-wfu-gray-400 mb-2">No favorites yet</p>
-          <p className="text-sm text-wfu-gray-500">Head to the map and heart the restaurants you love!</p>
+        <div className="text-center py-12 text-wfu-gray-400">
+          <Heart size={48} className="mx-auto mb-4 text-wfu-gray-600" />
+          <p className="text-lg">No favorites yet</p>
+          <p className="mt-2">Click the heart icon on any restaurant to save it here</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {favorites.map((fav, i) => (
-            <div key={fav.id} className="card p-4 flex items-center gap-4 animate-fadeInUp"
-                 style={{ animationDelay: `${i * 50}ms` }}>
-              <div className="w-12 h-12 bg-wfu-gold/10 border border-wfu-gold/20 rounded-xl
-                              flex items-center justify-center shrink-0">
-                <Utensils className="w-5 h-5 text-wfu-gold" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-white truncate">{fav.restaurant_name}</h3>
-                <div className="flex items-center gap-2 mt-1 text-xs text-wfu-gray-400">
-                  <span>{fav.cuisine_type}</span>
-                  <span>·</span>
-                  <span>{fav.price_range}</span>
-                  <span>·</span>
-                  <span className="capitalize">{fav.meal_type}</span>
-                  {fav.address && (
-                    <>
-                      <span>·</span>
-                      <span className="flex items-center gap-0.5">
-                        <MapPin className="w-3 h-3" />
-                        {fav.address.split(',')[0]}
+        <div className="grid gap-4">
+          {favorites.map(restaurant => (
+            <div key={restaurant.id} className="bg-wfu-gray-800 rounded-xl p-5 border border-wfu-gray-700">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-white">{restaurant.name}</h3>
+                  <div className="flex items-center space-x-3 mt-1 text-sm text-wfu-gray-400">
+                    {restaurant.cuisine && (
+                      <span className="px-2 py-0.5 bg-wfu-gray-700 rounded-full text-xs">
+                        {restaurant.cuisine}
                       </span>
-                    </>
+                    )}
+                    <span className="flex items-center">
+                      <MapPin size={12} className="mr-1" />
+                      {restaurant.distanceMiles} mi
+                    </span>
+                    {restaurant.googleRating && (
+                      <span className="flex items-center text-wfu-gold">
+                        <Star size={12} className="mr-1 fill-current" />
+                        {restaurant.googleRating}
+                      </span>
+                    )}
+                  </div>
+                  {restaurant.address && (
+                    <p className="text-sm text-wfu-gray-400 mt-2">{restaurant.address}</p>
                   )}
                 </div>
+
+                <button
+                  onClick={() => removeFavorite(restaurant.id)}
+                  className="ml-3 p-2 text-red-400 hover:text-red-300 transition-colors"
+                  title="Remove from favorites"
+                >
+                  <Heart size={20} className="fill-current" />
+                </button>
               </div>
-              <button onClick={() => handleRemove(fav.restaurant_id)}
-                      className="text-wfu-gray-500 hover:text-red-400 transition-colors p-2"
-                      title="Remove favorite">
-                <Trash2 className="w-4 h-4" />
-              </button>
             </div>
           ))}
         </div>

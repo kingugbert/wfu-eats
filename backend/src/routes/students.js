@@ -1,43 +1,55 @@
-const router = require('express').Router();
+const express = require('express');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 
-// Get student profile with favorites
-router.get('/:id', async (req, res) => {
+const router = express.Router();
+
+// Get favorites
+router.get('/favorites', authenticate, async (req, res) => {
   try {
-    const student = await pool.query(
-      `SELECT id, display_name, class_year, major, avatar_url, created_at
-       FROM students WHERE id = $1`, [req.params.id]
+    const result = await pool.query(
+      `SELECT r.*, f.created_at AS favorited_at,
+        (3959 * acos(
+          cos(radians(36.1335)) * cos(radians(r.latitude)) *
+          cos(radians(r.longitude) - radians(-80.2762)) +
+          sin(radians(36.1335)) * sin(radians(r.latitude))
+        )) AS distance_miles
+       FROM favorites f
+       JOIN restaurants r ON f.restaurant_id = r.id
+       WHERE f.student_id = $1
+       ORDER BY f.created_at DESC`,
+      [req.user.id]
     );
-    if (student.rows.length === 0) return res.status(404).json({ error: 'Student not found' });
 
-    const favorites = await pool.query(
-      `SELECT f.*, r.name AS restaurant_name, r.cuisine_type, r.price_range, r.image_url
-       FROM favorites f JOIN restaurants r ON f.restaurant_id = r.id
-       WHERE f.student_id = $1 ORDER BY f.created_at DESC`, [req.params.id]
-    );
-
-    res.json({ ...student.rows[0], favorites: favorites.rows });
+    res.json(result.rows.map(r => ({
+      id: r.id,
+      name: r.name,
+      address: r.address,
+      latitude: parseFloat(r.latitude),
+      longitude: parseFloat(r.longitude),
+      cuisine: r.cuisine,
+      priceRange: r.price_range,
+      description: r.description,
+      googleRating: r.google_rating ? parseFloat(r.google_rating) : null,
+      googlePhotoRef: r.google_photo_ref,
+      distanceMiles: parseFloat(parseFloat(r.distance_miles).toFixed(2)),
+      isFavorite: true,
+      favoritedAt: r.favorited_at
+    })));
   } catch (err) {
-    console.error('Get student error:', err);
-    res.status(500).json({ error: 'Failed to fetch student' });
+    console.error('Get favorites error:', err);
+    res.status(500).json({ error: 'Failed to fetch favorites' });
   }
 });
 
-// Add favorite restaurant
-router.post('/favorites', authenticate, async (req, res) => {
+// Add favorite
+router.post('/favorites/:restaurantId', authenticate, async (req, res) => {
   try {
-    const { restaurantId, mealType, notes } = req.body;
-    if (!restaurantId) return res.status(400).json({ error: 'restaurantId is required' });
-
-    const result = await pool.query(
-      `INSERT INTO favorites (student_id, restaurant_id, meal_type, notes)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (student_id, restaurant_id) DO UPDATE SET meal_type = $3, notes = $4
-       RETURNING *`,
-      [req.user.id, restaurantId, mealType || 'both', notes || null]
+    await pool.query(
+      'INSERT INTO favorites (student_id, restaurant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [req.user.id, req.params.restaurantId]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({ message: 'Added to favorites' });
   } catch (err) {
     console.error('Add favorite error:', err);
     res.status(500).json({ error: 'Failed to add favorite' });
@@ -51,27 +63,10 @@ router.delete('/favorites/:restaurantId', authenticate, async (req, res) => {
       'DELETE FROM favorites WHERE student_id = $1 AND restaurant_id = $2',
       [req.user.id, req.params.restaurantId]
     );
-    res.json({ message: 'Favorite removed' });
+    res.json({ message: 'Removed from favorites' });
   } catch (err) {
     console.error('Remove favorite error:', err);
     res.status(500).json({ error: 'Failed to remove favorite' });
-  }
-});
-
-// Get current user's favorites
-router.get('/me/favorites', authenticate, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT f.*, r.name AS restaurant_name, r.cuisine_type, r.price_range,
-              r.image_url, r.latitude, r.longitude, r.address
-       FROM favorites f JOIN restaurants r ON f.restaurant_id = r.id
-       WHERE f.student_id = $1 ORDER BY f.created_at DESC`,
-      [req.user.id]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Get favorites error:', err);
-    res.status(500).json({ error: 'Failed to fetch favorites' });
   }
 });
 
